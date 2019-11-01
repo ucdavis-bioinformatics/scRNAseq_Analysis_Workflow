@@ -1,0 +1,188 @@
+---
+title: "Single Cell RNAseq Part 1"
+author: "Bioinformatics Core"
+output:
+    html_document:
+      keep_md: TRUE
+---
+
+```{r library_load, warning=FALSE,error=FALSE,message=FALSE, echo=FALSE, result=FALSE}
+library(Seurat)
+library(hdf5r)
+library(knitr)
+library(kableExtra)
+library(ggplot2)
+library(gridExtra)
+```
+
+
+```{r experiment info, warning=FALSE,error=FALSE,message=FALSE, echo=FALSE, result=FALSE}
+## parent dataset folder, assumes all sample folders exist underneath
+experiment_name = "Denicol Bovine Ovary"
+dataset_loc <- "."
+ids <- c("Bov_cells", "Bov_ov")
+```
+
+```{r read_metrics, warning=FALSE,error=FALSE,message=FALSE, echo=FALSE, result=FALSE}
+d10x.metrics <- lapply(ids, function(i){
+  metrics <- read.csv(file.path(dataset_loc,i,"outs/metrics_summary.csv"), colClasses = "character")
+})
+experiment.metrics <- do.call("rbind", d10x.metrics)
+rownames(experiment.metrics) <- ids
+
+sequencing_metrics <- data.frame(t(experiment.metrics[,c(4:17,1,18,2,3,19,20)]))
+
+row.names(sequencing_metrics) <- gsub("\\."," ", rownames(sequencing_metrics))
+```
+
+
+```{r table_metrics, warning=FALSE,error=FALSE,message=FALSE, echo=FALSE, result=TRUE}
+sequencing_metrics %>%
+  kable(caption = 'Cell Ranger Results') %>%
+  pack_rows("Sequencing Characteristics", 1, 7, label_row_css = "background-color: #666; color: #fff;") %>%
+  pack_rows("Mapping Characteristics", 8, 14, label_row_css = "background-color: #666; color: #fff;") %>%
+  pack_rows("Cell Characteristics", 15, 20, label_row_css = "background-color: #666; color: #fff;") %>%
+  kable_styling("striped")
+```
+
+
+```{r read_h5, warning=FALSE,error=FALSE,message=FALSE, echo=FALSE, result=FALSE}
+d10x.data <- lapply(ids, function(i){
+  d10x <- Read10X_h5(file.path(dataset_loc,i,"outs/raw_feature_bc_matrix.h5"))
+  colnames(d10x) <- paste(sapply(strsplit(colnames(d10x),split="-"),'[[',1L),i,sep="-")
+  d10x[,Matrix:::colSums(d10x) >0]
+})
+```
+
+
+```{r fig_barcode_umi, warning=FALSE,error=FALSE,message=FALSE, echo=FALSE, result=TRUE, fig.width=10, }
+cr_filtered_cells <- as.numeric(gsub(",","",as.character(unlist(sequencing_metrics["Estimated Number of Cells",]))))
+
+plot_cellranger_cells <- function(ind){
+  xbreaks = c(1,1e1,1e2,1e3,1e4,1e5,1e6)
+  xlabels = c("1","10","100","1000","10k","100K","1M")
+  ybreaks = c(1,2,5,10,20,50,100,200,500,1000,2000,5000,10000,20000,50000,100000,200000,500000,1000000)
+  ylabels = c("1","2","5","10","2","5","100","2","5","1000","2","5","10k","2","5","100K","2","5","1M")
+
+  pl1 <- data.frame(index=seq.int(1,ncol(d10x.data[[ind]])), nCount_RNA = sort(Matrix:::colSums(d10x.data[[ind]])+1,decreasing=T), nFeature_RNA = sort(Matrix:::colSums(d10x.data[[ind]]>0)+1,decreasing=T)) %>% ggplot() + 
+    scale_color_manual(values=c("grey50","red2","blue4"), labels=c("UMI_Background", "Features", "UMI_Cells"), name=NULL) +
+    ggtitle(paste("CellRanger filltered cells:",ids[ind],sep=" ")) + xlab("Barcodes") + ylab("UMI count") + 
+    scale_x_continuous(trans = 'log2', breaks=xbreaks, labels = xlabels) + 
+    scale_y_continuous(trans = 'log2', breaks=ybreaks, labels = ylabels) +
+    geom_line(aes(x=index, y=nCount_RNA, color=index<=cr_filtered_cells[ind] , group=1), size=1.75) +
+    geom_line(aes(x=index, y=nFeature_RNA, color="Features", group=1), size=1.25)
+
+  return(pl1)
+}
+
+
+plot_cellranger_cells <- function(ind){
+  xbreaks = c(1,1e1,1e2,1e3,1e4,1e5,1e6)
+  xlabels = c("1","10","100","1000","10k","100K","1M")
+  ybreaks = c(1,2,5,10,20,50,100,200,500,1000,2000,5000,10000,20000,50000,100000,200000,500000,1000000)
+  ylabels = c("1","2","5","10","2","5","100","2","5","1000","2","5","10k","2","5","100K","2","5","1M")
+
+  pl1 <- data.frame(index=seq.int(1,ncol(d10x.data[[ind]])), nCount_RNA = sort(Matrix:::colSums(d10x.data[[ind]])+1,decreasing=T), nFeature_RNA = sort(Matrix:::colSums(d10x.data[[ind]]>0)+1,decreasing=T)) %>% ggplot() + 
+    scale_color_manual(values=c("grey50","red2","blue4"), labels=c("UMI_Background", "Features", "UMI_Cells"), name=NULL) +
+    ggtitle(paste("CellRanger filltered cells:",ids[ind],sep=" ")) + xlab("Barcodes") + ylab("UMI count") + 
+    scale_x_continuous(trans = 'log2', breaks=xbreaks, labels = xlabels) + 
+    scale_y_continuous(trans = 'log2', breaks=ybreaks, labels = ylabels) +
+    geom_line(aes(x=index, y=nCount_RNA, color=index<=cr_filtered_cells[ind] , group=1), size=1.75) +
+    geom_line(aes(x=index, y=nFeature_RNA, color="Features", group=1), size=1.25)
+
+  return(pl1)
+}
+
+plot_cellranger_cells(2)
+
+plot_umiXgene <- function(ind){
+  pl2 <- data.frame(nCount_RNA=Matrix:::colSums(d10x.data[[ind]]), nFeature_RNA=Matrix:::colSums(d10x.data[[ind]]>0)) %>% ggplot(mapping = aes(x = nCount_RNA, 
+        y = nFeature_RNA)) + geom_point(position = "jitter", size = 1)
+}
+
+pl2
+
+FeatureScatter(
+  experiment.aggregate, "nCount_RNA", "nFeature_RNA",
+  pt.size = 0.5)
+
+lapply(seq_along(filtered_cells), plot_cellranger_cells)
+```
+
+
+```{r}
+
+cutoff <- c(20, 200)
+new <- mapply(cutoff, d10x.data, function(x,y) y[,colSums(y) >= x])
+experiment.data <- do.call("cbind", d10x.data)
+
+experiment.seurat <- CreateSeuratObject(
+  experiment.data,
+  project = experiment_name,
+  min.cells = 2,
+  min.features = 10,
+  names.field = 2,
+  names.delim = "\\-")
+
+
+experiment.aggregate$percent.mito <- PercentageFeatureSet(experiment.aggregate, pattern = "^mt-")
+```
+
+
+
+### Lets create a fake batch metadata (used in part 3), Here we determine UCD_Adj_VitE is from one batch and UCD_Adj_VitE/UCD_Adj_VitE are from a second battch
+
+Here we build a new metadata variable 'batchid' which can be used to specify treatment groups.
+```{r}
+samplename = experiment.aggregate@meta.data$orig.ident
+table(samplename)
+
+batchid = rep("Batch1",length(samplename))
+batchid[samplename %in% c("UCD_Adj_VitE")] = "Batch2"
+names(batchid) = rownames(experiment.aggregate@meta.data)
+
+experiment.aggregate <- AddMetaData(
+  object = experiment.aggregate,
+  metadata = batchid,
+  col.name = "batchid")
+
+table(experiment.aggregate$batchid)
+```
+
+### Lets spend a little time getting to know the Seurat object.
+
+The Seurat object is the center of each single cell analysis. It stores __all__ information associated with the dataset, including data, annotations, analyses, etc. The R function slotNames can be used to view the slot names within an object.
+
+```{r}
+slotNames(experiment.aggregate)
+```
+
+We can then view the data within a slot with the `@` operator.
+```{r}
+head(experiment.aggregate@meta.data)
+```
+
+#### Question(s)
+
+1. What slots are empty, what slots have data?
+2. What columns are available in meta.data?
+3. Look up the help documentation for subset?
+
+## Finally, save the original object, write out a tab-delimited table that could be read into excel, and view the object.
+```{r}
+write.table(as.matrix(experiment.data),"raw.datatable.txt",sep="\t",col.names=T,row.names=T)
+experiment.aggregate
+
+## Original dataset in Seurat class, with no filtering
+save(experiment.aggregate,file="original_seurat_object.RData")
+```
+
+## Get the next Rmd file
+```{r eval=FALSE}
+download.file("https://raw.githubusercontent.com/ucdavis-bioinformatics-training/2019-single-cell-RNA-sequencing-Workshop-UCD_UCSF/master/scrnaseq_analysis/scRNA_Workshop-PART2.Rmd", "scRNA_Workshop-PART2.Rmd")
+```
+
+## Session Information
+```{r}
+sessionInfo()
+```
